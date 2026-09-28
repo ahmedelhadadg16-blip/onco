@@ -493,13 +493,13 @@ function viewSetup(scope){
   ${step(1,"What do you want to practise?","Pick one type, or mix them.",
     sel("types","mcq","MCQs")+sel("types","essay","Essay questions")+sel("types","recall","Quick-recall cards")+sel("types","mixed","A mix of all"))}
   ${step(2,"Which questions?","Real exam questions are marked “Past paper”. AI questions cover the lecture points that past papers have not asked yet.",
-    sel("origin","both","All questions")+sel("origin","past","Past exams only")+sel("origin","rep","🔁 Asked 2+ times")+sel("origin","year","📅 One exam year")+sel("origin","claude","🤖 AI questions (not in past papers)")+sel("origin","aibest","⭐ Best AI questions (mock-grade)")
+    sel("origin","both","All questions")+sel("origin","past","Past exams only")+sel("origin","rep","🔁 Asked 2+ times")+sel("origin","year","📅 One exam year")+sel("origin","claude","🤖 AI questions (not in past papers)")
     +`<div id="yearrow" class="pillrow ${CFG.origin==="year"?"":"hide"}" style="width:100%;margin-top:6px"></div>`)}
   <div class="card step"><div class="stephead"><span class="stepn"></span><b>Skip what I've done?</b></div>
     <div class="small">Leave out every question you have already answered, in any session, so Random only gives you new ones.</div>
     <div class="pillrow" style="margin-top:10px"><span class="chip ${CFG.fresh?"":"on"}" data-f="0">Include all</span><span class="chip ${CFG.fresh?"on":""}" data-f="1">🆕 Only questions I haven't answered</span></div></div>
-  ${step(3,"How many AI questions?","Past-paper questions are always all included. Standard skips the rarely examined AI details.",
-    sel("depth","core","Standard (recommended)")+sel("depth","all","Everything"),"depthcard")}
+  ${step(3,"How many AI questions?","Past-paper questions are always all included. This only filters the AI-written questions — from the strictest pick to everything.",
+    sel("depth","top","🏆 Best of the best")+sel("depth","mock","⭐ Exam-grade (the ones mocks use)")+sel("depth","core","✅ Everything except rare details")+sel("depth","all","📚 All AI questions"),"depthcard")}
   ${step(4,"How do you want to see the answers?","",
     sel("mode","exam","Quiz me — I answer first")+sel("mode","study","Reading mode — answers shown"))}
   ${step(5,"In what order?","",
@@ -517,6 +517,9 @@ function viewSetup(scope){
     const yr=CFG.origin==="year";
     $("#yearrow").classList.toggle("hide",!yr); if(yr) drawYears();
     $("#depthcard").classList.toggle("hide",!["both","claude"].includes(CFG.origin));
+    { const base=(CFG.types==="mixed"?pool:pool.filter(q=>q.t===CFG.types)).filter(q=>q.t==="mcq"&&q.o==="claude");
+      $("#depthcard").querySelectorAll(".chip[data-g=depth]").forEach(c=>{ const n=base.filter(q=>aiLevelOK(q,c.dataset.v)).length;
+        let b=c.querySelector("b.cnt"); if(!b){ b=document.createElement("b"); b.className="cnt"; c.appendChild(document.createTextNode(" ")); c.appendChild(b);} b.textContent=n; }); }
     const n=filterPool(pool).length;
     $("#begin").textContent = n ? `▶ Start — ${plural(n,"question")}${CFG.fresh?" not answered yet":""}` : (CFG.fresh && filterPool(pool,true).length ? "🎉 You've answered all of these — choose “Include all” to go again" : "No questions match — change a choice above");
     $("#begin").disabled = n===0;
@@ -542,8 +545,7 @@ function filterPoolAll(pool){
   let p = pool.slice();
   if(CFG.types!=="mixed") p = p.filter(q=>q.t===CFG.types);
   if(CFG.origin==="year"){ const y=+CFG.year; return p.filter(q=>q.t!=="recall" && q.o==="past" && (y?qYears(q).includes(y):!qYears(q).length)); }
-  if(CFG.depth!=="all") p = p.filter(q=> !(q.t==="mcq" && q.o==="claude" && q.tier>2));   // depth trims AI questions only
-  if(CFG.origin==="aibest") return p.filter(q=> isBestAI(q));   // same filter the mock uses for AI items
+  if(CFG.depth!=="all") p = p.filter(q=> !(q.t==="mcq" && q.o==="claude") || aiLevelOK(q,CFG.depth));   // depth filters AI MCQs only
   if(CFG.origin==="rep") p = p.filter(q=> q.t!=="recall" && (q.o==="past" && (q.rp||0)>=2 || q.cs>1));
   else if(CFG.origin!=="both") p = p.filter(q=> q.t==="recall" ? CFG.origin==="past" : q.o===CFG.origin);
   return p;
@@ -575,7 +577,6 @@ function startQuiz(pool, scope){
   if(CFG.order==="shuffle") shuffle(list);
   else if(CFG.order==="importance") list.sort((a,b)=>(b.pr||0)-(a.pr||0));
   else if(CFG.order==="rep") list.sort((a,b)=>(b.rp||0)-(a.rp||0) || (b.y||0)-(a.y||0));
-  if(CFG.origin==="aibest" && CFG.order!=="shuffle") list.sort((a,b)=>((b.hy?1:0)-(a.hy?1:0)) || (b.pr||0)-(a.pr||0) || (b.mq||0)-(a.mq||0));
   if(CFG.origin==="both" && CFG.order==="shuffle"){
     const past = list.filter(q=>q.t==="recall"||q.o!=="claude");
     const cla  = list.filter(q=>q.t!=="recall"&&q.o==="claude");
@@ -682,6 +683,13 @@ function seenPenalty(recent,id){ return Math.min((recent.get(id)||0)*40,240); } 
 function rememberIds(ids){
   store.patch(st=>{ const prev=(st.mockRecent||[]); st.mockRecent = ids.concat(prev).slice(0,2500); });
 }
+function aiLevelOK(q,d){   // AI question levels: top ⊂ mock ⊂ core ⊂ all
+  if(d==="top") return isTopAI(q);
+  if(d==="mock") return isBestAI(q);
+  if(d==="core") return !(q.tier>2);
+  return true;
+}
+function isTopAI(q){ return isBestAI(q) && ((q.mq||0)>=65 || !!q.hy); }   // mock-grade + highest quality or study-guide high-yield
 function isBestAI(q){ return q.t==="mcq" && q.o==="claude" && q.mk===1 && (q.tier||2)<=2 && !isDetail(q) && !drugOnly(q); }   // mock-worthy AI only
 function isDetail(q){ return (q.tp||[]).some(t=>t==="epi"||t==="fig"); }
 function drugOnly(q){ const t=q.tp||[]; return t.includes("drug") && !t.includes("mgmt"); }
